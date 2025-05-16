@@ -5,7 +5,7 @@ from pydub import AudioSegment
 
 def load_audio(file_path):
     audio = AudioSegment.from_file(file_path)
-    samples = np.array(audio.get_array_of_samples()).astype(np.int16)
+    samples = np.array(audio.get_array_of_samples()).astype(np.float16)
 
     if audio.channels == 2:
         samples = samples.reshape((-1, 2)).mean(axis=1)

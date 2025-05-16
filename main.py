@@ -8,6 +8,11 @@ from features.audio_utils import (
 )
 from visualization.plot_waveform import plot_waveform
 from pydub import AudioSegment
+from features.audio_feature import (
+    extract_mfcc,
+    samples_to_time
+)
+from features.match_anomalies import find_similar_segments
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Audio Anomaly Remover")
@@ -36,6 +41,23 @@ def main():
 
     anomaly_clips = extract_segments(signal, sr, timecodes)
     print(f"[INFO] Extracted {len(anomaly_clips)} anomaly segments.")
+
+    anomaly_features = [extract_mfcc(clip, sr) for clip in anomaly_clips]
+
+    print(f"[INFO] Extracted MFCC from {len(anomaly_features)} anomaly clips.")
+    for i, f in enumerate(anomaly_features):
+        print(f" - Clip {i + 1}: {f.shape} (frames x coeffs)")
+
+    similar_ranges = find_similar_segments(signal, sr, anomaly_features, threshold = 0.15)
+    print(similar_ranges)
+
+    for idx, (start, end) in enumerate(similar_ranges):
+        t_start, t_end = samples_to_time(start, end, sr)
+        print(f"Match {idx + 1}: {t_start}s - {t_end}s")
+
+    # for idx, (start, end) in enumerate(similar_ranges):
+    #     match_clip = signal[start:end]
+    #     plot_waveform(match_clip, sr, title = f"Match {idx + 1}")
 
     os.makedirs(args.output_dir, exist_ok=True)
     base_name = os.path.splitext(os.path.basename(args.input))[0]
