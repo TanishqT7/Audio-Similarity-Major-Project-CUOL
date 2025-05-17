@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.spatial.distance import cosine
-from features.audio_feature import extract_mfcc
+from features.audio_feature import extract_features
 
 def sliding_window(signal, sr, window_sec=0.1, hop_sec=0.05):
     window_size = int(window_sec * sr)
@@ -14,22 +14,22 @@ def sliding_window(signal, sr, window_sec=0.1, hop_sec=0.05):
 
     return segments
 
-def avg_mfcc(mfcc):
-    return np.mean(mfcc, axis=0)
+def avg_feat(feat):
+    return np.mean(feat, axis=0)
 
-def find_similar_segments(signal, sr, anamoly_mfcc, threshold = 0.05):
+def find_similar_segments(signal, sr, anamoly_feat, threshold = 0.05):
 
     print("Searching for similar segments in the audio...")
 
     segments = sliding_window(signal, sr)
     similar_range = []
 
-    anamoly_vector = [avg_mfcc(a) for a in anamoly_mfcc]
+    anamoly_vector = [avg_feat(a) for a in anamoly_feat]
 
     for start, end, window in segments:
         try:
-            window_mfcc = extract_mfcc(window, sr)
-            window_vector = avg_mfcc(window_mfcc)
+            window_feat = extract_features(window, sr)
+            window_vector = avg_feat(window_feat)
 
             for anamoly_vec in anamoly_vector:
                 sim = 1 - cosine(anamoly_vec, window_vector)
