@@ -24,8 +24,8 @@ def compute_mfcc(signal: np.ndarray,
 
 def sliding_window_feature(signal: np.ndarray,
                            sr: int,
-                           window_sec: float = 0.25,
-                           hop_sec: float = 0.1,
+                           window_sec: float = 1.0,
+                           hop_sec: float = 0.5,
                            feature_fn = compute_mfcc,
                            **feat_kwargs) -> tuple[list[np.ndarray], np.ndarray]:
     

@@ -55,7 +55,7 @@ def main():
 
 
 
-    full_feats, centers = sliding_window_feature(signal, sr)
+    full_feats, centers = sliding_window_feature(signal, sr, window_sec=0.5, hop_sec=0.25)
 
     print(f"[INFO] Full audio sliced into {len(full_feats)} windows.")
     print(f"[INFO] First window MFCC shape: {full_feats[0].shape}, center at {centers[0]:.2f}s")
@@ -63,7 +63,7 @@ def main():
 
     print("[INFO] Matching anomalies with full Audio Window...")
 
-    detected_ranges = match_anomalies(anomaly_feats, full_feats, centers)
+    detected_ranges = match_anomalies(anomaly_feats, full_feats, centers, window_sec=0.5, threshold=0.9)
     print(f"[INFO] Detected {len(detected_ranges)} anamoly ranges:")
 
     all_ranges = sorted(timecodes + detected_ranges, key = lambda x: x[0])
