@@ -1,6 +1,6 @@
 import argparse
 import os
-import numpy as np
+# import numpy as np
 from features.audio_utils import (
     load_audio,
     parse_anomaly_timecodes,
@@ -15,7 +15,7 @@ from features.extract_features import(
 from visualization.plot_waveform import plot_waveform
 from pydub import AudioSegment
 from detection.matcher import match_anomalies
-from detection.silence_editor import silence_ranges
+from detection.silence_editor import silence_range_pydub
 
 
 def parse_args():
@@ -54,8 +54,8 @@ def main():
         print(f"[INFO] Anomaly Clip {i}: MFCC Matrix {mfcc.shape}, aggregated vector {agg.shape}.")
 
 
-    window_sec, hop_sec = 1.0, 0.5
-    full_feats, centers = sliding_window_feature(signal, sr, window_sec=window_sec, hop_sec=hop_sec)
+
+    full_feats, centers = sliding_window_feature(signal, sr)
 
     print(f"[INFO] Full audio sliced into {len(full_feats)} windows.")
     print(f"[INFO] First window MFCC shape: {full_feats[0].shape}, center at {centers[0]:.2f}s")
@@ -63,30 +63,28 @@ def main():
 
     print("[INFO] Matching anomalies with full Audio Window...")
 
-    detected_ranges = match_anomalies(anomaly_feats, full_feats, centers, window_sec=window_sec, threshold=0.75)
-
+    detected_ranges = match_anomalies(anomaly_feats, full_feats, centers)
     print(f"[INFO] Detected {len(detected_ranges)} anamoly ranges:")
 
-    for start, end in detected_ranges:
-        print(f"{start:.2f}s to {end:.2f}s")
+    all_ranges = sorted(timecodes + detected_ranges, key = lambda x: x[0])
+    merged = []
 
+    for start, end in all_ranges:
+        if not merged or start > merged[-1][1]:
+            merged.append((start, end))
+        else:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+    print(f"[INFO] Ranges to silence: {merged}")
 
-    print("[INFO] Silencing Detected Ranges...")
-    cleaned_signal = silence_ranges(signal, sr, detected_ranges)
-
+    orig_audio = AudioSegment.from_file(args.input)
+    cleaned = silence_range_pydub(orig_audio, merged)
 
     os.makedirs(args.output_dir, exist_ok=True)
-    base_name = os.path.splitext(os.path.basename(args.input))[0]
-    output_path = os.path.join(args.output_dir, f"{base_name}_Modified.wav")
+    base = os.path.splitext(os.path.basename(args.input))[0]
+    out_path = os.path.join(args.output_dir, f"{base}_modified.wav")
+    cleaned.export(out_path, format="wav")
 
-    int_signal = (cleaned_signal * 32767).astype(np.int16)
-    audio_segment = AudioSegment(int_signal.tobytes(), frame_rate = sr, sample_width = 2, channels = 1)
-    audio_segment.export(output_path, format="wav")
-
-    
-    # output_audio = AudioSegment(signal.tobytes(), frame_rate = sr, sample_width = 2, channels = 1)
-    # output_audio.export(output_path, format="wav")
-    # print(f"[INFO] Saved Placeholder output to: {output_path}")
+    print(f"[INFO] Audio saved to {out_path}")
 
 if __name__ == "__main__":
     main()
