@@ -63,7 +63,7 @@ def main():
 
     print("[INFO] Matching anomalies with full Audio Window...")
 
-    detected_ranges = match_anomalies(anomaly_feats, full_feats, centers, window_sec=0.5, threshold=0.9)
+    detected_ranges = match_anomalies(anomaly_feats, full_feats, centers, window_sec=0.5, threshold=0.7)
     print(f"[INFO] Detected {len(detected_ranges)} anamoly ranges:")
 
     all_ranges = sorted(timecodes + detected_ranges, key = lambda x: x[0])

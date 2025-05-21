@@ -1,5 +1,6 @@
 import numpy as np
-from scipy.spatial.distance import cosine
+from librosa.sequence import dtw
+from librosa.util import normalize
 
 def match_anomalies(anomaly_vecs, full_feats, centers, window_sec=1.0, threshold=0.75):
 
@@ -7,10 +8,10 @@ def match_anomalies(anomaly_vecs, full_feats, centers, window_sec=1.0, threshold
 
     matches = []
 
-    for a_vec in anomaly_vecs:
-        for idx, f_vec in enumerate(full_aggs):
-            sim = 1 - cosine(a_vec, f_vec)
-            if sim >= threshold:
+    for anomaly in anomaly_vecs:
+        for idx, window in enumerate(full_aggs):
+            dist = dtw_distance(anomaly, window)
+            if dist <= threshold:
                 center = centers[idx]
                 start = center - window_sec / 2
                 end = center + window_sec / 2
@@ -30,5 +31,16 @@ def match_anomalies(anomaly_vecs, full_feats, centers, window_sec=1.0, threshold
 
         else:
             merged.append(curr)
+    
+        print(f"[DEBUG] DTW Distance: {dist:.2f}")
 
     return merged
+
+def dtw_distance(query: np.ndarray, target: np.ndarray) -> float:
+
+    query = normalize(query)
+    target = normalize(target)
+
+    D, _ = dtw(X=query.T, Y=target.T, metric="euclidean")
+
+    return D[-1, -1]
