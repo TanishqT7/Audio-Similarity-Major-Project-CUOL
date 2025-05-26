@@ -2,7 +2,7 @@ import numpy as np
 from librosa.sequence import dtw
 from librosa.util import normalize
 
-def match_anomalies(anomaly_vecs, full_feats, centers, window_sec=1.0, threshold=0.75):
+def match_anomalies(anomaly_vecs, full_feats, centers, window_sec=0.5, threshold=0.99):
 
     full_aggs = [np.mean(feat, axis=1) for feat in full_feats]
 
