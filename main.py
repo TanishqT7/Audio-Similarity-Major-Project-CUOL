@@ -1,6 +1,6 @@
 import argparse
 import os
-# import numpy as np
+import numpy as np
 from features.audio_utils import (
     load_audio,
     parse_anomaly_timecodes,
@@ -14,6 +14,7 @@ from features.extract_features import(
 )
 from visualization.plot_waveform import plot_waveform
 from pydub import AudioSegment
+from pydub.utils import make_chunks
 from detection.matcher import match_anomalies
 from detection.silence_editor import silence_range_pydub
 
@@ -24,15 +25,60 @@ def parse_args():
     parser.add_argument("--input", required=True, help="Path to the input audio file")
     parser.add_argument("--timecodes", help="Path to the files containing the timecodes")
     parser.add_argument("--output_dir", default="data/outputs", help="Output Directory Path")
+    parser.add_argument("--chunk_minutes", type=int, default=5, help="Chunk size in minutes")
 
     return parser.parse_args()
 
+def process_chunk(chunk, chunk_idx, chunk_start_sec, timecodes, sr):
+
+    samples = np.array(chunk.get_array_of_samples()).astype(np.int16)
+    if chunk.channels == 2:
+        samples = samples.reshape((-1, 2)).mean(axis=1).astype(np.int16)
+
+    chunk_end_sec = chunk_start_sec + len(chunk) / 1000
+
+    rel_timecodes = [
+        (max(0, s - chunk_start_sec), min(e - chunk_start_sec, len(chunk) / 1000))
+        for s, e in timecodes
+        if s < chunk_end_sec and e > chunk_start_sec
+    ]
+
+    print(f"[INFO] {len(rel_timecodes)} anomaly timecodes found in this chunk.")
+
+    anomaly_clip = extract_segments(samples, sr, rel_timecodes)
+    anamoly_feats = [aggregate_segment_mfcc(compute_mfcc(clip, sr)) for clip in anomaly_clip]
+
+    full_feats, centers = sliding_window_feature(samples, sr, window_sec=0.25, hop_sec=0.125)
+
+    detected_ranges = match_anomalies(anamoly_feats, full_feats, centers, window_sec=0.5, threshold=0.99)
+
+    all_ranges = sorted(rel_timecodes + detected_ranges, key=lambda x: x[0])
+    merged = []
+
+    for start, end in all_ranges:
+        if not merged or start > merged[-1][1]:
+            merged.append((start, end))
+        else:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+
+    print(f"[INFO] Silencing {len(merged)} merged ranges in chunk {chunk_idx + 1}.")
+    cleaned_chunk = silence_range_pydub(chunk, merged)
+
+    return cleaned_chunk
+
+
 def main():
     args = parse_args()
+    os.makedirs(args.output_dir, exist_ok=True)
+    base = os.path.splitext(os.path.basename(args.input))[0]
+    
+    full_signal, sr = load_audio(args.input)
+    print(f"[INFO] Loaded audio with sample rate {sr}, Length: {len(full_signal)} samples." )
+    plot_waveform(full_signal, sr, title = "Input Audio - Visual Inspection!")
 
-    signal, sr = load_audio(args.input)
-    print(f"[INFO] Loaded audio with sample rate {sr}, Length: {len(signal)} samples." )
-    plot_waveform(signal, sr, title = "Input Audio - Visual Inspection!")
+    orig_audio = AudioSegment.from_file(args.input)
+    chunk_ms_len = args.chunk_minutes * 60 * 1000
+    chunks = make_chunks(orig_audio, chunk_ms_len)
 
 
     if args.timecodes:
@@ -43,46 +89,15 @@ def main():
         timecodes = input_timecodes_from_user()
         print(f"[INFO] Collected {len(timecodes)} timecode entries from user input.")
 
-    anomaly_clips = extract_segments(signal, sr, timecodes)
-    print(f"[INFO] Extracted {len(anomaly_clips)} anomaly segments.")
+    cleaned_chunks = []
+    for idx, chunk in enumerate(chunks):
+        chunk_start_sec = (idx * chunk_ms_len) / 1000.0
+        cleaned = process_chunk(chunk, idx, chunk_start_sec, timecodes, sr)
+        cleaned_chunks.append(cleaned)
 
-    anomaly_feats = []
-    for i, clips in enumerate(anomaly_clips, start=1):
-        mfcc = compute_mfcc(clips, sr)
-        agg = aggregate_segment_mfcc(mfcc)
-        anomaly_feats.append(agg)
-        print(f"[INFO] Anomaly Clip {i}: MFCC Matrix {mfcc.shape}, aggregated vector {agg.shape}.")
-
-
-
-    full_feats, centers = sliding_window_feature(signal, sr, window_sec=0.25, hop_sec=0.125)
-
-    print(f"[INFO] Full audio sliced into {len(full_feats)} windows.")
-    print(f"[INFO] First window MFCC shape: {full_feats[0].shape}, center at {centers[0]:.2f}s")
-
-
-    print("[INFO] Matching anomalies with full Audio Window...")
-
-    detected_ranges = match_anomalies(anomaly_feats, full_feats, centers, window_sec=0.5, threshold=0.99)
-    print(f"[INFO] Detected {len(detected_ranges)} anamoly ranges:")
-
-    all_ranges = sorted(timecodes + detected_ranges, key = lambda x: x[0])
-    merged = []
-
-    for start, end in all_ranges:
-        if not merged or start > merged[-1][1]:
-            merged.append((start, end))
-        else:
-            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
-    print(f"[INFO] Ranges to silence: {merged}")
-
-    orig_audio = AudioSegment.from_file(args.input)
-    cleaned = silence_range_pydub(orig_audio, merged)
-
-    os.makedirs(args.output_dir, exist_ok=True)
-    base = os.path.splitext(os.path.basename(args.input))[0]
+    final_audio = sum(cleaned_chunks[1:], cleaned_chunks[0])
     out_path = os.path.join(args.output_dir, f"{base}_modified.wav")
-    cleaned.export(out_path, format="wav")
+    final_audio.export(out_path, format="wav")
 
     print(f"[INFO] Audio saved to {out_path}")
 
