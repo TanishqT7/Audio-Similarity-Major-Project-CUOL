@@ -22,6 +22,7 @@ def match_anomalies(anomaly_vecs, full_feats, centers, window_sec=0.5, threshold
     
     matches.sort(key=lambda x: x[0])
     merged = [matches[0]]
+    dtw_distances = []
 
     for curr in matches[1:]:
         prev = merged[-1]
@@ -31,9 +32,10 @@ def match_anomalies(anomaly_vecs, full_feats, centers, window_sec=0.5, threshold
 
         else:
             merged.append(curr)
-    
-        print(f"[DEBUG] DTW Distance: {dist:.2f}")
 
+        dtw_distances.append(f"{dist:.2f}")
+        # print(f"[DEBUG] DTW Distance: {dist:.2f}")
+    print("[DEBUG] DTW Distances:", ",".join(dtw_distances))
     return merged
 
 def dtw_distance(query: np.ndarray, target: np.ndarray) -> float:

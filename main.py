@@ -29,30 +29,16 @@ def parse_args():
 
     return parser.parse_args()
 
-def process_chunk(chunk, chunk_idx, chunk_start_sec, timecodes, sr):
+def process_chunk(chunk, chunk_idx, chunk_start_sec, anamoly_feats, sr):
 
     samples = np.array(chunk.get_array_of_samples()).astype(np.int16)
     if chunk.channels == 2:
         samples = samples.reshape((-1, 2)).mean(axis=1).astype(np.int16)
 
-    chunk_end_sec = chunk_start_sec + len(chunk) / 1000
-
-    rel_timecodes = [
-        (max(0, s - chunk_start_sec), min(e - chunk_start_sec, len(chunk) / 1000))
-        for s, e in timecodes
-        if s < chunk_end_sec and e > chunk_start_sec
-    ]
-
-    print(f"[INFO] {len(rel_timecodes)} anomaly timecodes found in this chunk.")
-
-    anomaly_clip = extract_segments(samples, sr, rel_timecodes)
-    anamoly_feats = [aggregate_segment_mfcc(compute_mfcc(clip, sr)) for clip in anomaly_clip]
-
     full_feats, centers = sliding_window_feature(samples, sr, window_sec=0.25, hop_sec=0.125)
-
     detected_ranges = match_anomalies(anamoly_feats, full_feats, centers, window_sec=0.5, threshold=0.99)
 
-    all_ranges = sorted(rel_timecodes + detected_ranges, key=lambda x: x[0])
+    all_ranges = sorted(detected_ranges, key=lambda x: x[0])
     merged = []
 
     for start, end in all_ranges:
@@ -64,7 +50,7 @@ def process_chunk(chunk, chunk_idx, chunk_start_sec, timecodes, sr):
     print(f"[INFO] Silencing {len(merged)} merged ranges in chunk {chunk_idx + 1}.")
     cleaned_chunk = silence_range_pydub(chunk, merged)
 
-    return cleaned_chunk
+    return cleaned_chunk, len(merged)
 
 
 def main():
@@ -74,7 +60,7 @@ def main():
     
     full_signal, sr = load_audio(args.input)
     print(f"[INFO] Loaded audio with sample rate {sr}, Length: {len(full_signal)} samples." )
-    plot_waveform(full_signal, sr, title = "Input Audio - Visual Inspection!")
+    #plot_waveform(full_signal, sr, title = "Input Audio - Visual Inspection!")
 
     orig_audio = AudioSegment.from_file(args.input)
     chunk_ms_len = args.chunk_minutes * 60 * 1000
@@ -89,16 +75,23 @@ def main():
         timecodes = input_timecodes_from_user()
         print(f"[INFO] Collected {len(timecodes)} timecode entries from user input.")
 
+    anomaly_clips = extract_segments(full_signal, sr, timecodes)
+    anomaly_feats = [aggregate_segment_mfcc(compute_mfcc(clip, sr)) for clip in anomaly_clips]
+    print(f"[INFO] Extracted and computed features for {len(anomaly_feats)} anomaly segments.")
+
     cleaned_chunks = []
+    total_silenced_clips = 0
     for idx, chunk in enumerate(chunks):
         chunk_start_sec = (idx * chunk_ms_len) / 1000.0
-        cleaned = process_chunk(chunk, idx, chunk_start_sec, timecodes, sr)
+        cleaned, num_ranges = process_chunk(chunk, idx, chunk_start_sec, anomaly_feats, sr)
         cleaned_chunks.append(cleaned)
+        total_silenced_clips += num_ranges
 
     final_audio = sum(cleaned_chunks[1:], cleaned_chunks[0])
     out_path = os.path.join(args.output_dir, f"{base}_modified.wav")
     final_audio.export(out_path, format="wav")
 
+    print(f"[INFO] Total ranges silenced: {total_silenced_clips}")
     print(f"[INFO] Audio saved to {out_path}")
 
 if __name__ == "__main__":
