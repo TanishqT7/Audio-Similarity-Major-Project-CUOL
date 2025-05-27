@@ -29,16 +29,23 @@ def parse_args():
 
     return parser.parse_args()
 
-def process_chunk(chunk, chunk_idx, chunk_start_sec, anamoly_feats, sr):
+def process_chunk(chunk, chunk_idx, chunk_start_sec, anamoly_feats, manual_ranges, sr):
 
     samples = np.array(chunk.get_array_of_samples()).astype(np.int16)
     if chunk.channels == 2:
         samples = samples.reshape((-1, 2)).mean(axis=1).astype(np.int16)
 
     full_feats, centers = sliding_window_feature(samples, sr, window_sec=0.25, hop_sec=0.125)
-    detected_ranges = match_anomalies(anamoly_feats, full_feats, centers, window_sec=0.5, threshold=0.99)
+    detected_ranges = match_anomalies(anamoly_feats, full_feats, centers, window_sec=0.5, threshold=0.999)
 
-    all_ranges = sorted(detected_ranges, key=lambda x: x[0])
+    chunk_end = chunk_start_sec + len(chunk) / 1000
+    manual_in_chunk = [
+        (max(0, s - chunk_start_sec), min(e - chunk_start_sec, len(chunk) / 1000))
+        for s, e in manual_ranges
+        if s < chunk_end and e > chunk_start_sec
+    ]
+
+    all_ranges = sorted(detected_ranges + manual_in_chunk, key=lambda x: x[0])
     merged = []
 
     for start, end in all_ranges:
@@ -83,7 +90,7 @@ def main():
     total_silenced_clips = 0
     for idx, chunk in enumerate(chunks):
         chunk_start_sec = (idx * chunk_ms_len) / 1000.0
-        cleaned, num_ranges = process_chunk(chunk, idx, chunk_start_sec, anomaly_feats, sr)
+        cleaned, num_ranges = process_chunk(chunk, idx, chunk_start_sec, anomaly_feats, timecodes, sr)
         cleaned_chunks.append(cleaned)
         total_silenced_clips += num_ranges
 
