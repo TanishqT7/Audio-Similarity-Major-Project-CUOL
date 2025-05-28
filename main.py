@@ -28,7 +28,8 @@ def parse_args():
     parser.add_argument("--output_dir", default="data/outputs", help="Output Directory Path")
     parser.add_argument("--chunk_minutes", type=int, default=5, help="Chunk size in minutes")
 
-    parser.add_argument("--label_only", action="store_true", help="Only generate windows_labels.csv and exit")
+    parser.add_argument("--label", action="store_true", help="Append Window Labels to CSV (does no exist)")
+    parser.add_argument("--make_dataset", action="store_true", help="Build training_data.npz from windows_labels.csv")
     parser.add_argument("--window_sec", default= 0.5, type=float, help="Window length (seconds) for Labeling")
     parser.add_argument("--hop_sec", default= 0.25, type=float, help="Hop length (seconds) for Labeling")
 
@@ -64,40 +65,75 @@ def process_chunk(chunk, chunk_idx, chunk_start_sec, anamoly_feats, manual_range
 
     return cleaned_chunk, len(merged)
 
-def label_windows(audio_path, timecode_path, window_sec, hop_sec):
+def label_windows(audio_path, timecodes, window_sec, hop_sec):
     signal, sr = load_audio(audio_path)
 
-    if timecode_path:
-        tc = parse_anomaly_timecodes(timecode_path)
-
-    else:
-        tc = input_timecodes_from_user()
-
+    tc = timecodes
     
     feats, centers = sliding_window_feature(signal, sr, window_sec=window_sec, hop_sec=hop_sec)
 
     out_csv = "data/window_labels.csv"
     os.makedirs(os.path.dirname(out_csv), exist_ok=True)
 
-    with open(out_csv, "w", newline="") as f:
+    seen = set()
+    if os.path.exists(out_csv):
+        with open(out_csv) as f:
+            rdr = csv.reader(f)
+            next(rdr)
+
+            for fn, win, start, end, label in rdr:
+                seen.add((fn, int(win), label))
+
+    with open(out_csv, "a", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["window_idx", "start_sec", "end_sec", "label"])
+        if not seen:
+            writer.writerow(["file_name", "window_idx", "start_sec", "end_sec", "label"])
 
-        for idx, c in enumerate(centers):
-            start = c - window_sec / 2
-            end = c + window_sec / 2
-            label = int(any(s < end and e > start for s, e in tc))
-            writer.writerow([idx, f"{start:.3f}", f"{end:.3f}", label])
+        for idx, center in enumerate(centers):
+            key = (os.path.basename(audio_path), idx, int(any(s < center + window_sec/2 and e > center - window_sec/2 for s, e in tc)))
 
-    print(f"[INFO] windows_labels.csv generated ({len(centers)} rows).")
+            if key in seen:
+                continue
 
+            seen.add(key)
+            w_start, w_end = center - window_sec/2, center + window_sec/2
+
+            writer.writerow([key[0], idx, f"{w_start:.3f}", f"{w_end:.3f}", key[2]])
+
+    print(f"[INFO] Labels appended to {out_csv} ({len(seen)} total rows.)")
+
+
+def build_dataset(audio_files, window_sec, hop_sec):
+    labels = []
+
+    with open("data/window_labels.csv") as f:
+        rdr = csv.DictReader(f)
+        for row in rdr:
+            labels.append(row)
+
+    X, Y = [], []
+
+    for row in labels:
+        fn = row["file_name"]
+        idx = int(row["window_idx"])
+        start = float(row["start_sec"])
+        end = float(row["end_sec"])
+        sig, sr = load_audio(f"data/{fn}")
+        clip = sig[int(start*sr): int(end*sr)]
+        mfcc = compute_mfcc(clip, sr)
+        vec = aggregate_segment_mfcc(mfcc)
+
+        X.append(vec)
+        Y.append(int(row["label"]))
+
+    X = np.stack(X)
+    Y = np.array(Y)
+
+    np.savez_compressed("data/training_data.npz", X=X, Y=Y)
+    print(f"[INFO] Dataset saved to data/training_data.npz: X.shape = {X.shape}, Y.shape = {Y.shape}")
         
 def main():
     args = parse_args()
-
-    if args.label_only:
-        label_windows(args.input, args.timecodes, args.window_sec, args.hop_sec)
-        return
 
     os.makedirs(args.output_dir, exist_ok=True)
     base = os.path.splitext(os.path.basename(args.input))[0]
@@ -110,7 +146,6 @@ def main():
     chunk_ms_len = args.chunk_minutes * 60 * 1000
     chunks = make_chunks(orig_audio, chunk_ms_len)
 
-
     if args.timecodes:
         timecodes = parse_anomaly_timecodes(args.timecodes)
         print(f"[INFO] Loaded {len(timecodes)} timecode entries from file.")
@@ -119,6 +154,12 @@ def main():
         timecodes = input_timecodes_from_user()
         print(f"[INFO] Collected {len(timecodes)} timecode entries from user input.")
 
+    if args.label:
+        label_windows(args.input, timecodes, args.window_sec, args.hop_sec)
+
+    if args.make_dataset:
+        build_dataset([args.input], args.window_sec, args.hop_sec)
+        
     anomaly_clips = extract_segments(full_signal, sr, timecodes)
     anomaly_feats = [aggregate_segment_mfcc(compute_mfcc(clip, sr)) for clip in anomaly_clips]
     print(f"[INFO] Extracted and computed features for {len(anomaly_feats)} anomaly segments.")
