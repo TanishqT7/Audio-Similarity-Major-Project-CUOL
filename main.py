@@ -2,6 +2,7 @@ import argparse
 import os
 import csv
 import numpy as np
+from collections import OrderedDict
 from features.audio_utils import (
     load_audio,
     parse_anomaly_timecodes,
@@ -71,59 +72,61 @@ def label_windows(audio_path, timecodes, window_sec, hop_sec):
     tc = timecodes
     
     feats, centers = sliding_window_feature(signal, sr, window_sec=window_sec, hop_sec=hop_sec)
-
+    base_name = os.path.basename(audio_path)
     out_csv = "data/window_labels.csv"
     os.makedirs(os.path.dirname(out_csv), exist_ok=True)
 
-    seen = set()
+    label_dict = OrderedDict()
     if os.path.exists(out_csv):
-        with open(out_csv) as f:
-            rdr = csv.reader(f)
+        with open(out_csv, newline="") as f:
+            rdr = csv.DictReader(f)
+            for row in rdr:
+                key = (row["file_name"], int(row["window_idx"]))
+                label_dict[key] = row
 
-            for fn, win, start, end, label in rdr:
-                seen.add((fn, win, label))
+    for idx, center in enumerate(centers):
 
-    with open(out_csv, "a", newline="") as f:
-        writer = csv.writer(f)
-        if not seen:
-            writer.writerow(["file_name", "window_idx", "start_sec", "end_sec", "label"])
+        w_start, w_end = center - window_sec/2, center + window_sec/2
+        label = int(any(s < w_end and e > w_start for s, e in tc))
+        key = (base_name, idx)
+        label_dict[key] = {
+            "file_name": base_name,
+            "window_idx": idx,
+            "start_sec": f"{w_start:.3f}",
+            "end_sec": f"{w_end:.3f}",
+            "label": label
+        }
 
-        for idx, center in enumerate(centers):
-            key = (os.path.basename(audio_path), idx, int(any(s < center + window_sec/2 and e > center - window_sec/2 for s, e in tc)))
+    with open(out_csv, "w", newline="") as f:
+        fieldnames = ["file_name", "window_idx", "start_sec", "end_sec", "label"]
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in label_dict.values():
+            writer.writerow(row)
 
-            if key in seen:
-                continue
 
-            seen.add(key)
-            w_start, w_end = center - window_sec/2, center + window_sec/2
-
-            writer.writerow([key[0], idx, f"{w_start:.3f}", f"{w_end:.3f}", key[2]])
-
-    print(f"[INFO] Labels appended to {out_csv} ({len(seen)} total rows.)")
+    print(f"[INFO] window_labels.csv updated with {len(label_dict)} unique rows.")
 
 
 def build_dataset(audio_files, window_sec, hop_sec):
-    labels = []
-
-    with open("data/window_labels.csv") as f:
-        rdr = csv.DictReader(f)
-        for row in rdr:
-            labels.append(row)
 
     X, Y = [], []
+    with open("data/window_labels.csv") as f:
+        rdr = csv.DictReader(f)
 
-    for row in labels:
-        fn = row["file_name"]
-        idx = int(row["window_idx"])
-        start = float(row["start_sec"])
-        end = float(row["end_sec"])
-        sig, sr = load_audio(f"data/{fn}")
-        clip = sig[int(start*sr): int(end*sr)]
-        mfcc = compute_mfcc(clip, sr)
-        vec = aggregate_segment_mfcc(mfcc)
+        for row in rdr:
+            fn = row["file_name"]
+            idx = int(row["window_idx"])
+            start = float(row["start_sec"])
+            end = float(row["end_sec"])
+            label = int(row["label"])
+            sig, sr = load_audio(f"data/{fn}")
+            clip = sig[int(start*sr): int(end*sr)]
+            mfcc = compute_mfcc(clip, sr)
+            vec = aggregate_segment_mfcc(mfcc)
 
-        X.append(vec)
-        Y.append(int(row["label"]))
+            X.append(vec)
+            Y.append(int(row["label"]))
 
     X = np.stack(X)
     Y = np.array(Y)
@@ -153,8 +156,9 @@ def main():
         timecodes = input_timecodes_from_user()
         print(f"[INFO] Collected {len(timecodes)} timecode entries from user input.")
 
-    if args.label:
-        label_windows(args.input, timecodes, args.window_sec, args.hop_sec)
+    label_windows(args.input, timecodes, args.window_sec, args.hop_sec)
+    # if args.label:
+    #     return
 
     if args.make_dataset:
         build_dataset([args.input], args.window_sec, args.hop_sec)
