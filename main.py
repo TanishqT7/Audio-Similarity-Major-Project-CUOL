@@ -79,10 +79,9 @@ def label_windows(audio_path, timecodes, window_sec, hop_sec):
     if os.path.exists(out_csv):
         with open(out_csv) as f:
             rdr = csv.reader(f)
-            next(rdr)
 
             for fn, win, start, end, label in rdr:
-                seen.add((fn, int(win), label))
+                seen.add((fn, win, label))
 
     with open(out_csv, "a", newline="") as f:
         writer = csv.writer(f)
