@@ -1,5 +1,6 @@
 import argparse
 import os
+import csv
 import numpy as np
 from features.audio_utils import (
     load_audio,
@@ -26,6 +27,10 @@ def parse_args():
     parser.add_argument("--timecodes", help="Path to the files containing the timecodes")
     parser.add_argument("--output_dir", default="data/outputs", help="Output Directory Path")
     parser.add_argument("--chunk_minutes", type=int, default=5, help="Chunk size in minutes")
+
+    parser.add_argument("--label_only", action="store_true", help="Only generate windows_labels.csv and exit")
+    parser.add_argument("--window_sec", default= 0.5, type=float, help="Window length (seconds) for Labeling")
+    parser.add_argument("--hop_sec", default= 0.25, type=float, help="Hop length (seconds) for Labeling")
 
     return parser.parse_args()
 
@@ -59,9 +64,41 @@ def process_chunk(chunk, chunk_idx, chunk_start_sec, anamoly_feats, manual_range
 
     return cleaned_chunk, len(merged)
 
+def label_windows(audio_path, timecode_path, window_sec, hop_sec):
+    signal, sr = load_audio(audio_path)
 
+    if timecode_path:
+        tc = parse_anomaly_timecodes(timecode_path)
+
+    else:
+        tc = input_timecodes_from_user()
+
+    
+    feats, centers = sliding_window_feature(signal, sr, window_sec=window_sec, hop_sec=hop_sec)
+
+    out_csv = "data/window_labels.csv"
+    os.makedirs(os.path.dirname(out_csv), exist_ok=True)
+
+    with open(out_csv, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["window_idx", "start_sec", "end_sec", "label"])
+
+        for idx, c in enumerate(centers):
+            start = c - window_sec / 2
+            end = c + window_sec / 2
+            label = int(any(s < end and e > start for s, e in tc))
+            writer.writerow([idx, f"{start:.3f}", f"{end:.3f}", label])
+
+    print(f"[INFO] windows_labels.csv generated ({len(centers)} rows).")
+
+        
 def main():
     args = parse_args()
+
+    if args.label_only:
+        label_windows(args.input, args.timecodes, args.window_sec, args.hop_sec)
+        return
+
     os.makedirs(args.output_dir, exist_ok=True)
     base = os.path.splitext(os.path.basename(args.input))[0]
     
