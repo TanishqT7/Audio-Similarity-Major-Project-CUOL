@@ -124,28 +124,32 @@ def label_windows(audio_path, timecodes, window_sec, hop_sec, chunk_minutes=5):
 
 def build_dataset(audio_file, window_sec, hop_sec):
 
+    audio = AudioSegment.from_file(audio_file)
+
     X, Y = [], []
     with open("data/window_labels.csv") as f:
         rdr = csv.DictReader(f)
 
         audio = AudioSegment.from_file(audio_file)
         for row in rdr:
-            path = row.get("file_path")
-            start = float(row["start_sec"])
-            end = float(row["end_sec"])
-            segment = audio[start * 1000:end * 1000]
-            sig, sr = load_audio(path)
-            clip = sig[int(start*sr): int(end*sr)]
-            samples = np.array(segment.get_array_of_samples()).astype(np.int16)
+
+            start_ms = int(float(row["start_sec"]) * 1000)
+            end_ms = int(float(row["end_sec"]) * 1000)
+            label = int(row["label"])
+
+            segment = audio[start_ms:end_ms]
+
+            samples = np.array(segment.get_array_of_samples()).astype(np.float32)
             if audio.channels == 2:
                 samples = samples.reshape((-1, 2)).mean(axis=1)
             
-            sr = audio.frame_rate
-            mfcc = compute_mfcc(clip, sr)
+            sr = segment.frame_rate
+
+            mfcc = compute_mfcc(samples, sr)
             vec = aggregate_segment_mfcc(mfcc)
 
             X.append(vec)
-            Y.append(int(row["label"]))
+            Y.append(label)
 
     X = np.stack(X)
     Y = np.array(Y)
