@@ -175,9 +175,8 @@ def main():
         timecodes = input_timecodes_from_user()
         print(f"[INFO] Collected {len(timecodes)} timecode entries from user input.")
 
-    label_windows(args.input, timecodes, args.window_sec, args.hop_sec)
-    # if args.label:
-    #     return
+    if args.label:
+        label_windows(args.input, timecodes, args.window_sec, args.hop_sec)
 
     if args.make_dataset:
         build_dataset(args.input, args.window_sec, args.hop_sec)
