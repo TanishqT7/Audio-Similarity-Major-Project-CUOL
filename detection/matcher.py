@@ -35,7 +35,7 @@ def match_anomalies(anomaly_vecs, full_feats, centers, window_sec=0.5, threshold
 
         dtw_distances.append(f"{dist:.2f}")
         # print(f"[DEBUG] DTW Distance: {dist:.2f}")
-    print("[DEBUG] DTW Distances:", ",".join(dtw_distances))
+    print("[DEBUG] DTW Distance:", dtw_distances[0])
     return merged
 
 def dtw_distance(query: np.ndarray, target: np.ndarray) -> float:

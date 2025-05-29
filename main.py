@@ -43,7 +43,7 @@ def process_chunk(chunk, chunk_idx, chunk_start_sec, anamoly_feats, manual_range
         samples = samples.reshape((-1, 2)).mean(axis=1).astype(np.int16)
 
     full_feats, centers = sliding_window_feature(samples, sr, window_sec=0.25, hop_sec=0.125)
-    detected_ranges = match_anomalies(anamoly_feats, full_feats, centers, window_sec=0.5, threshold=0.999)
+    detected_ranges = match_anomalies(anamoly_feats, full_feats, centers, window_sec=0.5, threshold=0.99)
 
     chunk_end = chunk_start_sec + len(chunk) / 1000
     manual_in_chunk = [
@@ -66,12 +66,12 @@ def process_chunk(chunk, chunk_idx, chunk_start_sec, anamoly_feats, manual_range
 
     return cleaned_chunk, len(merged)
 
-def label_windows(audio_path, timecodes, window_sec, hop_sec):
-    signal, sr = load_audio(audio_path)
+def label_windows(audio_path, timecodes, window_sec, hop_sec, chunk_minutes=5):
 
-    tc = timecodes
-    
-    feats, centers = sliding_window_feature(signal, sr, window_sec=window_sec, hop_sec=hop_sec)
+    audio = AudioSegment.from_file(audio_path)
+    chunk_ms_len = chunk_minutes * 60 * 1000
+    chunks = make_chunks(audio, chunk_ms_len)
+
     base_name = os.path.basename(audio_path)
     out_csv = "data/window_labels.csv"
     os.makedirs(os.path.dirname(out_csv), exist_ok=True)
@@ -84,21 +84,35 @@ def label_windows(audio_path, timecodes, window_sec, hop_sec):
                 key = (row["file_name"], int(row["window_idx"]))
                 label_dict[key] = row
 
-    for idx, center in enumerate(centers):
+    sr = audio.frame_rate
+    global_idx = 0
 
-        w_start, w_end = center - window_sec/2, center + window_sec/2
-        label = int(any(s < w_end and e > w_start for s, e in tc))
-        key = (base_name, idx)
-        label_dict[key] = {
-            "file_name": base_name,
-            "window_idx": idx,
-            "start_sec": f"{w_start:.3f}",
-            "end_sec": f"{w_end:.3f}",
-            "label": label
-        }
+    for chunk_idx, chunk in enumerate(chunks):
+        start_sec = (chunk_idx * chunk_ms_len) / 1000
+        samples = np.array(chunk.get_array_of_samples()).astype(np.int16)
+        if chunk.channels == 2:
+            samples = samples.reshape((-1, 2)).mean(axis=1)
+
+        feats, centers = sliding_window_feature(samples, sr, window_sec=window_sec, hop_sec=hop_sec)
+
+        for c in centers:
+
+            global_center = start_sec + c
+            w_start, w_end = global_center - window_sec/2, global_center + window_sec/2
+            label = int(any(s < w_end and e > w_start for s, e in timecodes))
+            key = (base_name, global_idx)
+            label_dict[key] = {
+                "file_name": base_name,
+                "file_path": audio_path,
+                "window_idx": global_idx,
+                "start_sec": f"{w_start:.3f}",
+                "end_sec": f"{w_end:.3f}",
+                "label": label
+            }
+            global_idx += 1
 
     with open(out_csv, "w", newline="") as f:
-        fieldnames = ["file_name", "window_idx", "start_sec", "end_sec", "label"]
+        fieldnames = ["file_name", "file_path", "window_idx", "start_sec", "end_sec", "label"]
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for row in label_dict.values():
@@ -108,20 +122,25 @@ def label_windows(audio_path, timecodes, window_sec, hop_sec):
     print(f"[INFO] window_labels.csv updated with {len(label_dict)} unique rows.")
 
 
-def build_dataset(audio_files, window_sec, hop_sec):
+def build_dataset(audio_file, window_sec, hop_sec):
 
     X, Y = [], []
     with open("data/window_labels.csv") as f:
         rdr = csv.DictReader(f)
 
+        audio = AudioSegment.from_file(audio_file)
         for row in rdr:
-            fn = row["file_name"]
-            idx = int(row["window_idx"])
+            path = row.get("file_path")
             start = float(row["start_sec"])
             end = float(row["end_sec"])
-            label = int(row["label"])
-            sig, sr = load_audio(f"data/{fn}")
+            segment = audio[start * 1000:end * 1000]
+            sig, sr = load_audio(path)
             clip = sig[int(start*sr): int(end*sr)]
+            samples = np.array(segment.get_array_of_samples()).astype(np.int16)
+            if audio.channels == 2:
+                samples = samples.reshape((-1, 2)).mean(axis=1)
+            
+            sr = audio.frame_rate
             mfcc = compute_mfcc(clip, sr)
             vec = aggregate_segment_mfcc(mfcc)
 
@@ -161,7 +180,7 @@ def main():
     #     return
 
     if args.make_dataset:
-        build_dataset([args.input], args.window_sec, args.hop_sec)
+        build_dataset(args.input, args.window_sec, args.hop_sec)
         
     anomaly_clips = extract_segments(full_signal, sr, timecodes)
     anomaly_feats = [aggregate_segment_mfcc(compute_mfcc(clip, sr)) for clip in anomaly_clips]
